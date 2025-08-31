@@ -17,10 +17,14 @@
     #controls {
       padding: 10px 12px; background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 12px; box-shadow: 0 1px 0 rgba(0,0,0,0.06);
     }
-    #leftControls { display: flex; align-items: center; gap: 10px; }
-    #yearLabel { font-weight: 700; }
+    #leftControls { display: flex; align-items: center; gap: 10px; flex: 1; max-width: 60%; }
+    #yearLabel { font-weight: 700; min-width: 80px; }
+    #yearSlider { flex: 1; min-width: 200px; }
+    .year-controls { display: flex; align-items: center; gap: 8px; }
     .btn { border: 1px solid #ddd; background: #fff; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
     .btn:hover { background: #f0f3f8; }
+    .btn-small-year { border: 1px solid #ddd; background: #fff; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; min-width: 30px; }
+    .btn-small-year:hover { background: #f0f3f8; }
 
     /* Popup UI */
     .popup-form, .popup-group { font-size: 14px; min-width: 240px; }
@@ -46,8 +50,16 @@
   <div id="map"></div>
   <div id="controls">
     <div id="leftControls">
+      <div class="year-controls">
+        <button id="year-10" class="btn-small-year" title="Go back 10 years">-10</button>
+        <button id="year-1" class="btn-small-year" title="Go back 1 year">-1</button>
+      </div>
       <label>Year: <span id="yearLabel">1900</span></label>
       <input type="range" id="yearSlider" min="1500" max="2025" value="1900" />
+      <div class="year-controls">
+        <button id="year+1" class="btn-small-year" title="Go forward 1 year">+1</button>
+        <button id="year+10" class="btn-small-year" title="Go forward 10 years">+10</button>
+      </div>
     </div>
     <div>
       <button id="exportBtn" class="btn">Export</button>
