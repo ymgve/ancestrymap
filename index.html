@@ -55,8 +55,11 @@
     let ancestors = JSON.parse(localStorage.getItem("ancestors") || "[]");
 
     function getUniqueNames() {
-      let names = ancestors.map(a => a.name);
-      return [...new Set(names)].sort();
+      return [...new Set(ancestors.map(a => a.name))].sort();
+    }
+
+    function saveData() {
+      localStorage.setItem("ancestors", JSON.stringify(ancestors));
     }
 
     function renderMarkers() {
@@ -67,18 +70,16 @@
       let year = parseInt(document.getElementById("yearSlider").value);
       document.getElementById("yearLabel").textContent = year;
 
-      ancestors.forEach(a => {
+      ancestors.forEach((a, index) => {
         if (a.startYear <= year && year <= a.endYear) {
-          let marker = L.marker([a.lat, a.lng])
-            .addTo(map)
-            .bindPopup(`<b>${a.name}</b><br>${a.startYear}–${a.endYear}`);
+          let marker = L.marker([a.lat, a.lng]).addTo(map);
+          marker.on("click", () => openInfoPopup(a, index, marker));
           markers.push(marker);
         }
       });
     }
 
-    // Add ancestor by clicking the map
-    map.on("click", (e) => {
+    function openFormPopup(latlng, existingData=null, index=null) {
       let uniqueNames = getUniqueNames();
       let options = uniqueNames.map(n => `<option value="${n}">${n}</option>`).join("");
 
@@ -89,20 +90,20 @@
             <option value="">-- New Ancestor --</option>
             ${options}
           </select>
-          <input type="text" id="ancestorName" placeholder="New ancestor name" />
+          <input type="text" id="ancestorName" placeholder="New ancestor name" value="${existingData ? existingData.name : ""}" />
 
           <label>Start Year:</label>
-          <input type="number" id="startYear" required />
+          <input type="number" id="startYear" required value="${existingData ? existingData.startYear : ""}" />
 
           <label>End Year:</label>
-          <input type="number" id="endYear" required />
+          <input type="number" id="endYear" required value="${existingData ? existingData.endYear : ""}" />
 
-          <button type="button" id="saveAncestor">Save</button>
+          <button type="button" id="saveAncestor">${existingData ? "Update" : "Save"}</button>
         </form>
       `;
 
       let popup = L.popup()
-        .setLatLng(e.latlng)
+        .setLatLng(latlng)
         .setContent(formHtml)
         .openOn(map);
 
@@ -110,13 +111,9 @@
         let select = document.getElementById("ancestorSelect");
         let nameInput = document.getElementById("ancestorName");
 
-        // Auto-fill name input if selecting existing ancestor
+        // Fill name input when selecting an existing ancestor
         select.addEventListener("change", () => {
-          if (select.value) {
-            nameInput.value = select.value;
-          } else {
-            nameInput.value = "";
-          }
+          nameInput.value = select.value || "";
         });
 
         document.getElementById("saveAncestor").addEventListener("click", () => {
@@ -127,18 +124,60 @@
           let end = parseInt(document.getElementById("endYear").value);
           if (isNaN(start) || isNaN(end)) { alert("Enter valid years."); return; }
 
-          ancestors.push({ name, lat: e.latlng.lat, lng: e.latlng.lng, startYear: start, endYear: end });
-          localStorage.setItem("ancestors", JSON.stringify(ancestors));
+          let newData = { name, lat: latlng.lat, lng: latlng.lng, startYear: start, endYear: end };
+
+          if (existingData && index !== null) {
+            ancestors[index] = newData; // update
+          } else {
+            ancestors.push(newData); // add new
+          }
+
+          saveData();
           renderMarkers();
           map.closePopup();
         });
-      }, 100); // delay so popup DOM exists
+      }, 100);
+    }
+
+    function openInfoPopup(a, index, marker) {
+      let html = `
+        <div>
+          <b>${a.name}</b><br>
+          ${a.startYear} – ${a.endYear}<br>
+          <button id="editBtn">Edit</button>
+          <button id="deleteBtn">Delete</button>
+          <button id="addHereBtn">Add Another Person Here</button>
+        </div>
+      `;
+      marker.bindPopup(html).openPopup();
+
+      setTimeout(() => {
+        document.getElementById("editBtn").addEventListener("click", () => {
+          openFormPopup({lat: a.lat, lng: a.lng}, a, index);
+        });
+        document.getElementById("deleteBtn").addEventListener("click", () => {
+          if (confirm("Delete this record?")) {
+            ancestors.splice(index, 1);
+            saveData();
+            renderMarkers();
+            map.closePopup();
+          }
+        });
+        document.getElementById("addHereBtn").addEventListener("click", () => {
+          openFormPopup({lat: a.lat, lng: a.lng});
+        });
+      }, 100);
+    }
+
+    // Add ancestor by clicking empty map
+    map.on("click", (e) => {
+      openFormPopup(e.latlng);
     });
 
     document.getElementById("yearSlider").addEventListener("input", renderMarkers);
 
     document.getElementById("exportBtn").addEventListener("click", () => {
-      let dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(ancestors));
+      let dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(ancestors, null, 2));
       let a = document.createElement("a");
       a.setAttribute("href", dataStr);
       a.setAttribute("download", "ancestors.json");
@@ -155,7 +194,7 @@
       let reader = new FileReader();
       reader.onload = event => {
         ancestors = JSON.parse(event.target.result);
-        localStorage.setItem("ancestors", JSON.stringify(ancestors));
+        saveData();
         renderMarkers();
       };
       reader.readAsText(file);
