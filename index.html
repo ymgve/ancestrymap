@@ -124,11 +124,11 @@
         <li>
           <div>
             <div class="res-title">${escapeHtml(item.name)}</div>
-            <div class="res-years">${item.startYear} – ${item.endYear}</div>
+            <div class="res-years">${item.startYear} — ${item.endYear}</div>
           </div>
           <div class="btn-row">
-            <button class="btn-small" data-act="edit" data-id="${item.id}">Edit</button>
-            <button class="btn-small danger" data-act="delete" data-id="${item.id}">Delete</button>
+            <button class="btn-small" onclick="editAncestor('${item.id}')">Edit</button>
+            <button class="btn-small danger" onclick="deleteAncestor('${item.id}', ${latlng.lat}, ${latlng.lng})">Delete</button>
           </div>
         </li>`).join('');
 
@@ -136,48 +136,41 @@
         <div class="popup-group">
           <div><strong>${group.items.length}</strong> record${group.items.length>1?'s':''} here in <strong>${year}</strong></div>
           <ul class="res-list">${list}</ul>
-          <button class="add-here" id="addHereBtn">Add Another Person Here</button>
+          <button class="add-here" onclick="openFormPopup({lat: ${latlng.lat}, lng: ${latlng.lng}})">Add Another Person Here</button>
         </div>`;
 
       L.popup().setLatLng(latlng).setContent(html).openOn(map);
-
-      // Attach listeners *every time* the popup opens to avoid stale handlers
-      map.once('popupopen', (ev) => {
-        const root = ev.popup.getElement();
-        root.querySelectorAll('button[data-act]').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault(); e.stopPropagation();
-            const act = btn.getAttribute('data-act');
-            const id = btn.getAttribute('data-id');
-            const recIndex = ancestors.findIndex(x => x.id === id);
-            if (recIndex === -1) return;
-            const rec = ancestors[recIndex];
-            if (act === 'edit') {
-              openFormPopup({lat: rec.lat, lng: rec.lng}, rec);
-            } else if (act === 'delete') {
-              if (confirm('Delete this record?')) {
-                ancestors.splice(recIndex, 1);
-                saveData();
-                renderMarkers();
-                // Re-open group popup at same location for current year (if any remain)
-                openGroupPopup(latlng, currentYear());
-              }
-            }
-          });
-        });
-        const addBtn = root.querySelector('#addHereBtn');
-        if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFormPopup(latlng); });
-      });
     }
+
+    // Global functions for button clicks
+    window.editAncestor = function(id) {
+      const rec = ancestors.find(x => x.id === id);
+      if (rec) {
+        openFormPopup({lat: rec.lat, lng: rec.lng}, rec);
+      }
+    };
+
+    window.deleteAncestor = function(id, lat, lng) {
+      if (confirm('Delete this record?')) {
+        const recIndex = ancestors.findIndex(x => x.id === id);
+        if (recIndex !== -1) {
+          ancestors.splice(recIndex, 1);
+          saveData();
+          renderMarkers();
+          // Re-open group popup at same location for current year (if any remain)
+          openGroupPopup({lat, lng}, currentYear());
+        }
+      }
+    };
 
     function openFormPopup(latlng, existing=null) {
       const names = getUniqueNames();
       const options = names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
 
       const html = `
-        <form class="popup-form">
+        <form class="popup-form" onsubmit="return false;">
           <label>Choose or enter ancestor</label>
-          <select id="ancestorSelect">
+          <select id="ancestorSelect" onchange="document.getElementById('ancestorName').value = this.value">
             <option value="">— New Ancestor —</option>
             ${options}
           </select>
@@ -193,48 +186,43 @@
             </div>
           </div>
           <div class="actions">
-            <button type="button" class="primary" id="saveBtn">${existing ? 'Update' : 'Save'}</button>
-            <button type="button" id="cancelBtn">Cancel</button>
+            <button type="button" class="primary" onclick="saveAncestor(${latlng.lat}, ${latlng.lng}, ${existing ? `'${existing.id}'` : 'null'})">${existing ? 'Update' : 'Save'}</button>
+            <button type="button" onclick="map.closePopup()">Cancel</button>
           </div>
         </form>`;
 
       L.popup().setLatLng(latlng).setContent(html).openOn(map);
-
-      map.once('popupopen', (ev) => {
-        const root = ev.popup.getElement();
-        const sel = root.querySelector('#ancestorSelect');
-        const nameInput = root.querySelector('#ancestorName');
-        const saveBtn = root.querySelector('#saveBtn');
-        const cancelBtn = root.querySelector('#cancelBtn');
-
-        sel.addEventListener('change', () => { nameInput.value = sel.value || ''; });
-        cancelBtn.addEventListener('click', (e) => { e.preventDefault(); map.closePopup(); });
-
-        saveBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          const name = (nameInput.value || '').trim();
-          const start = parseInt(root.querySelector('#startYear').value, 10);
-          const end = parseInt(root.querySelector('#endYear').value, 10);
-          if (!name) { alert('Please enter a name.'); return; }
-          if (isNaN(start) || isNaN(end)) { alert('Please enter valid years.'); return; }
-
-          if (existing) {
-            // Update existing record (keep its id)
-            const idx = ancestors.findIndex(x => x.id === existing.id);
-            if (idx !== -1) {
-              ancestors[idx] = { ...ancestors[idx], name, startYear: start, endYear: end, lat: latlng.lat, lng: latlng.lng };
-            }
-          } else {
-            ancestors.push({ id: uid(), name, lat: latlng.lat, lng: latlng.lng, startYear: start, endYear: end });
-          }
-
-          saveData();
-          renderMarkers();
-          // After saving, show the group popup at this location for the current year (helps with quick multi-entry)
-          openGroupPopup(latlng, currentYear());
-        });
-      });
     }
+
+    // Global function for saving
+    window.saveAncestor = function(lat, lng, existingId) {
+      const nameInput = document.getElementById('ancestorName');
+      const startInput = document.getElementById('startYear');
+      const endInput = document.getElementById('endYear');
+      
+      const name = (nameInput.value || '').trim();
+      const start = parseInt(startInput.value, 10);
+      const end = parseInt(endInput.value, 10);
+      
+      if (!name) { alert('Please enter a name.'); return; }
+      if (isNaN(start) || isNaN(end)) { alert('Please enter valid years.'); return; }
+
+      if (existingId) {
+        // Update existing record
+        const idx = ancestors.findIndex(x => x.id === existingId);
+        if (idx !== -1) {
+          ancestors[idx] = { ...ancestors[idx], name, startYear: start, endYear: end, lat, lng };
+        }
+      } else {
+        // Add new record
+        ancestors.push({ id: uid(), name, lat, lng, startYear: start, endYear: end });
+      }
+
+      saveData();
+      renderMarkers();
+      // After saving, show the group popup at this location for the current year
+      openGroupPopup({lat, lng}, currentYear());
+    };
 
     // Click on empty map to add new entry at that spot
     map.on('click', (e) => { openFormPopup(e.latlng); });
