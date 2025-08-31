@@ -51,14 +51,14 @@
   <div id="controls">
     <div id="leftControls">
       <div class="year-controls">
-        <button id="year-10" class="btn-small-year" title="Go back 10 years">-10</button>
-        <button id="year-1" class="btn-small-year" title="Go back 1 year">-1</button>
+        <button id="yearMinus10" class="btn-small-year" title="Go back 10 years">-10</button>
+        <button id="yearMinus1" class="btn-small-year" title="Go back 1 year">-1</button>
       </div>
       <label>Year: <span id="yearLabel">1900</span></label>
       <input type="range" id="yearSlider" min="1500" max="2025" value="1900" />
       <div class="year-controls">
-        <button id="year+1" class="btn-small-year" title="Go forward 1 year">+1</button>
-        <button id="year+10" class="btn-small-year" title="Go forward 10 years">+10</button>
+        <button id="yearPlus1" class="btn-small-year" title="Go forward 1 year">+1</button>
+        <button id="yearPlus10" class="btn-small-year" title="Go forward 10 years">+10</button>
       </div>
     </div>
     <div>
@@ -241,6 +241,21 @@
 
     // Slider re-renders markers; also close any open popup to avoid stale content
     $('#yearSlider').addEventListener('input', () => { map.closePopup(); renderMarkers(); });
+
+    // Year navigation buttons
+    function changeYear(delta) {
+      const slider = $('#yearSlider');
+      const currentYear = parseInt(slider.value, 10);
+      const newYear = Math.max(1500, Math.min(2025, currentYear + delta));
+      slider.value = newYear;
+      map.closePopup();
+      renderMarkers();
+    }
+
+    $('#yearMinus10').addEventListener('click', () => changeYear(-10));
+    $('#yearMinus1').addEventListener('click', () => changeYear(-1));
+    $('#yearPlus1').addEventListener('click', () => changeYear(1));
+    $('#yearPlus10').addEventListener('click', () => changeYear(10));
 
     // Export / Import
     $('#exportBtn').addEventListener('click', () => {
