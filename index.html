@@ -5,197 +5,270 @@
   <title>Ancestor Timeline Map (Leaflet)</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
   <style>
-    body { margin: 0; font-family: sans-serif; }
-    #map { height: 80vh; width: 100%; }
+    :root {
+      --bg: #f7f7f8;
+      --panel: #ffffff;
+      --text: #222;
+      --muted: #666;
+      --accent: #2f7dd1;
+    }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); background: var(--bg); }
+    #map { height: 78vh; width: 100%; }
     #controls {
-      padding: 10px;
-      background: #f5f5f5;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      padding: 10px 12px; background: var(--panel); display: flex; align-items: center; justify-content: space-between; gap: 12px; box-shadow: 0 1px 0 rgba(0,0,0,0.06);
     }
-    #yearLabel { font-weight: bold; }
-    .popup-form {
-      font-size: 14px;
-    }
-    .popup-form input, .popup-form select {
-      width: 100%;
-      margin: 3px 0;
-      box-sizing: border-box;
-    }
-    .popup-form button {
-      margin-top: 5px;
-      width: 100%;
-    }
+    #leftControls { display: flex; align-items: center; gap: 10px; }
+    #yearLabel { font-weight: 700; }
+    .btn { border: 1px solid #ddd; background: #fff; padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+    .btn:hover { background: #f0f3f8; }
+
+    /* Popup UI */
+    .popup-form, .popup-group { font-size: 14px; min-width: 240px; }
+    .popup-form label { font-size: 12px; color: var(--muted); }
+    .popup-form input, .popup-form select { width: 100%; margin: 4px 0 8px; box-sizing: border-box; padding: 6px 8px; }
+    .popup-form .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .popup-form .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+    .popup-form button { padding: 6px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; }
+    .popup-form button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    .res-list { list-style: none; padding: 0; margin: 6px 0; }
+    .res-list li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed #eee; }
+    .res-list li:last-child { border-bottom: none; }
+    .res-title { font-weight: 600; }
+    .res-years { color: var(--muted); font-size: 12px; }
+    .btn-row { display: flex; gap: 6px; }
+    .btn-small { padding: 4px 6px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; font-size: 12px; }
+    .btn-small.danger { border-color: #e06464; color: #b00020; }
+    .add-here { margin-top: 8px; width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; cursor: pointer; }
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="controls">
-    <div>
+    <div id="leftControls">
       <label>Year: <span id="yearLabel">1900</span></label>
       <input type="range" id="yearSlider" min="1500" max="2025" value="1900" />
     </div>
     <div>
-      <button id="exportBtn">Export</button>
-      <button id="importBtn">Import</button>
+      <button id="exportBtn" class="btn">Export</button>
+      <button id="importBtn" class="btn">Import</button>
       <input type="file" id="importFile" style="display:none" />
     </div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    let map = L.map('map').setView([20, 0], 2);
+    // --- Utilities ---
+    const $ = (sel, root = document) => root.querySelector(sel);
+    function uid() { return 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+    function escapeHtml(s="") { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+    const keyFrom = (lat, lng) => `${(+lat).toFixed(5)},${(+lng).toFixed(5)}`; // ~1m precision
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+    // --- Map ---
+    const map = L.map('map').setView([20, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
     let markers = [];
-    let ancestors = JSON.parse(localStorage.getItem("ancestors") || "[]");
+    let ancestors = JSON.parse(localStorage.getItem('ancestors') || '[]');
+
+    // Migrate records to include stable IDs (for per-record edit/delete)
+    let migrated = false;
+    ancestors.forEach(a => { if (!a.id) { a.id = uid(); migrated = true; } });
+    if (migrated) saveData();
+
+    function saveData() { localStorage.setItem('ancestors', JSON.stringify(ancestors)); }
+    function currentYear() { return parseInt($('#yearSlider').value, 10); }
 
     function getUniqueNames() {
-      return [...new Set(ancestors.map(a => a.name))].sort();
+      return [...new Set(ancestors.map(a => a.name))].filter(Boolean).sort((a,b)=>a.localeCompare(b));
     }
 
-    function saveData() {
-      localStorage.setItem("ancestors", JSON.stringify(ancestors));
+    function groupVisibleByLocation(year) {
+      const groups = new Map();
+      ancestors.forEach((a, index) => {
+        if (Number(a.startYear) <= year && year <= Number(a.endYear)) {
+          const key = keyFrom(a.lat, a.lng);
+          if (!groups.has(key)) groups.set(key, { lat: a.lat, lng: a.lng, items: [] });
+          groups.get(key).items.push({ ...a, index });
+        }
+      });
+      return groups;
     }
+
+    function clearMarkers() { markers.forEach(m => map.removeLayer(m)); markers = []; }
 
     function renderMarkers() {
-      // clear old markers
-      markers.forEach(m => map.removeLayer(m));
-      markers = [];
+      clearMarkers();
+      const year = currentYear();
+      $('#yearLabel').textContent = year;
 
-      let year = parseInt(document.getElementById("yearSlider").value);
-      document.getElementById("yearLabel").textContent = year;
-
-      ancestors.forEach((a, index) => {
-        if (a.startYear <= year && year <= a.endYear) {
-          let marker = L.marker([a.lat, a.lng]).addTo(map);
-          marker.on("click", () => openInfoPopup(a, index, marker));
-          markers.push(marker);
-        }
+      const groups = groupVisibleByLocation(year);
+      groups.forEach(group => {
+        const marker = L.marker([group.lat, group.lng]).addTo(map);
+        marker.on('click', () => openGroupPopup({lat: group.lat, lng: group.lng}, year));
+        markers.push(marker);
       });
     }
 
-    function openFormPopup(latlng, existingData=null, index=null) {
-      let uniqueNames = getUniqueNames();
-      let options = uniqueNames.map(n => `<option value="${n}">${n}</option>`).join("");
+    function getGroupAt(latlng, year) {
+      const key = keyFrom(latlng.lat, latlng.lng);
+      const items = ancestors.filter(a => keyFrom(a.lat, a.lng) === key && Number(a.startYear) <= year && year <= Number(a.endYear));
+      return { lat: latlng.lat, lng: latlng.lng, items };
+    }
 
-      let formHtml = `
+    function openGroupPopup(latlng, year) {
+      const group = getGroupAt(latlng, year);
+      if (!group.items.length) { map.closePopup(); return; }
+
+      const list = group.items.map(item => `
+        <li>
+          <div>
+            <div class="res-title">${escapeHtml(item.name)}</div>
+            <div class="res-years">${item.startYear} – ${item.endYear}</div>
+          </div>
+          <div class="btn-row">
+            <button class="btn-small" data-act="edit" data-id="${item.id}">Edit</button>
+            <button class="btn-small danger" data-act="delete" data-id="${item.id}">Delete</button>
+          </div>
+        </li>`).join('');
+
+      const html = `
+        <div class="popup-group">
+          <div><strong>${group.items.length}</strong> record${group.items.length>1?'s':''} here in <strong>${year}</strong></div>
+          <ul class="res-list">${list}</ul>
+          <button class="add-here" id="addHereBtn">Add Another Person Here</button>
+        </div>`;
+
+      L.popup().setLatLng(latlng).setContent(html).openOn(map);
+
+      // Attach listeners *every time* the popup opens to avoid stale handlers
+      map.once('popupopen', (ev) => {
+        const root = ev.popup.getElement();
+        root.querySelectorAll('button[data-act]').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            const act = btn.getAttribute('data-act');
+            const id = btn.getAttribute('data-id');
+            const recIndex = ancestors.findIndex(x => x.id === id);
+            if (recIndex === -1) return;
+            const rec = ancestors[recIndex];
+            if (act === 'edit') {
+              openFormPopup({lat: rec.lat, lng: rec.lng}, rec);
+            } else if (act === 'delete') {
+              if (confirm('Delete this record?')) {
+                ancestors.splice(recIndex, 1);
+                saveData();
+                renderMarkers();
+                // Re-open group popup at same location for current year (if any remain)
+                openGroupPopup(latlng, currentYear());
+              }
+            }
+          });
+        });
+        const addBtn = root.querySelector('#addHereBtn');
+        if (addBtn) addBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFormPopup(latlng); });
+      });
+    }
+
+    function openFormPopup(latlng, existing=null) {
+      const names = getUniqueNames();
+      const options = names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+
+      const html = `
         <form class="popup-form">
-          <label>Choose or enter ancestor:</label>
+          <label>Choose or enter ancestor</label>
           <select id="ancestorSelect">
-            <option value="">-- New Ancestor --</option>
+            <option value="">— New Ancestor —</option>
             ${options}
           </select>
-          <input type="text" id="ancestorName" placeholder="New ancestor name" value="${existingData ? existingData.name : ""}" />
+          <input type="text" id="ancestorName" placeholder="Name" value="${existing ? escapeHtml(existing.name) : ''}" />
+          <div class="row">
+            <div>
+              <label>Start Year</label>
+              <input type="number" id="startYear" value="${existing ? existing.startYear : ''}" />
+            </div>
+            <div>
+              <label>End Year</label>
+              <input type="number" id="endYear" value="${existing ? existing.endYear : ''}" />
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" class="primary" id="saveBtn">${existing ? 'Update' : 'Save'}</button>
+            <button type="button" id="cancelBtn">Cancel</button>
+          </div>
+        </form>`;
 
-          <label>Start Year:</label>
-          <input type="number" id="startYear" required value="${existingData ? existingData.startYear : ""}" />
+      L.popup().setLatLng(latlng).setContent(html).openOn(map);
 
-          <label>End Year:</label>
-          <input type="number" id="endYear" required value="${existingData ? existingData.endYear : ""}" />
+      map.once('popupopen', (ev) => {
+        const root = ev.popup.getElement();
+        const sel = root.querySelector('#ancestorSelect');
+        const nameInput = root.querySelector('#ancestorName');
+        const saveBtn = root.querySelector('#saveBtn');
+        const cancelBtn = root.querySelector('#cancelBtn');
 
-          <button type="button" id="saveAncestor">${existingData ? "Update" : "Save"}</button>
-        </form>
-      `;
+        sel.addEventListener('change', () => { nameInput.value = sel.value || ''; });
+        cancelBtn.addEventListener('click', (e) => { e.preventDefault(); map.closePopup(); });
 
-      let popup = L.popup()
-        .setLatLng(latlng)
-        .setContent(formHtml)
-        .openOn(map);
+        saveBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const name = (nameInput.value || '').trim();
+          const start = parseInt(root.querySelector('#startYear').value, 10);
+          const end = parseInt(root.querySelector('#endYear').value, 10);
+          if (!name) { alert('Please enter a name.'); return; }
+          if (isNaN(start) || isNaN(end)) { alert('Please enter valid years.'); return; }
 
-      setTimeout(() => {
-        let select = document.getElementById("ancestorSelect");
-        let nameInput = document.getElementById("ancestorName");
-
-        // Fill name input when selecting an existing ancestor
-        select.addEventListener("change", () => {
-          nameInput.value = select.value || "";
-        });
-
-        document.getElementById("saveAncestor").addEventListener("click", () => {
-          let name = nameInput.value.trim();
-          if (!name) { alert("Please enter a name."); return; }
-
-          let start = parseInt(document.getElementById("startYear").value);
-          let end = parseInt(document.getElementById("endYear").value);
-          if (isNaN(start) || isNaN(end)) { alert("Enter valid years."); return; }
-
-          let newData = { name, lat: latlng.lat, lng: latlng.lng, startYear: start, endYear: end };
-
-          if (existingData && index !== null) {
-            ancestors[index] = newData; // update
+          if (existing) {
+            // Update existing record (keep its id)
+            const idx = ancestors.findIndex(x => x.id === existing.id);
+            if (idx !== -1) {
+              ancestors[idx] = { ...ancestors[idx], name, startYear: start, endYear: end, lat: latlng.lat, lng: latlng.lng };
+            }
           } else {
-            ancestors.push(newData); // add new
+            ancestors.push({ id: uid(), name, lat: latlng.lat, lng: latlng.lng, startYear: start, endYear: end });
           }
 
           saveData();
           renderMarkers();
-          map.closePopup();
+          // After saving, show the group popup at this location for the current year (helps with quick multi-entry)
+          openGroupPopup(latlng, currentYear());
         });
-      }, 100);
+      });
     }
 
-    function openInfoPopup(a, index, marker) {
-      let html = `
-        <div>
-          <b>${a.name}</b><br>
-          ${a.startYear} – ${a.endYear}<br>
-          <button id="editBtn">Edit</button>
-          <button id="deleteBtn">Delete</button>
-          <button id="addHereBtn">Add Another Person Here</button>
-        </div>
-      `;
-      marker.bindPopup(html).openPopup();
+    // Click on empty map to add new entry at that spot
+    map.on('click', (e) => { openFormPopup(e.latlng); });
 
-      setTimeout(() => {
-        document.getElementById("editBtn").addEventListener("click", () => {
-          openFormPopup({lat: a.lat, lng: a.lng}, a, index);
-        });
-        document.getElementById("deleteBtn").addEventListener("click", () => {
-          if (confirm("Delete this record?")) {
-            ancestors.splice(index, 1);
-            saveData();
-            renderMarkers();
-            map.closePopup();
-          }
-        });
-        document.getElementById("addHereBtn").addEventListener("click", () => {
-          openFormPopup({lat: a.lat, lng: a.lng});
-        });
-      }, 100);
-    }
+    // Slider re-renders markers; also close any open popup to avoid stale content
+    $('#yearSlider').addEventListener('input', () => { map.closePopup(); renderMarkers(); });
 
-    // Add ancestor by clicking empty map
-    map.on("click", (e) => {
-      openFormPopup(e.latlng);
+    // Export / Import
+    $('#exportBtn').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(ancestors, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'ancestors.json'; a.click();
+      URL.revokeObjectURL(url);
     });
 
-    document.getElementById("yearSlider").addEventListener("input", renderMarkers);
-
-    document.getElementById("exportBtn").addEventListener("click", () => {
-      let dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(ancestors, null, 2));
-      let a = document.createElement("a");
-      a.setAttribute("href", dataStr);
-      a.setAttribute("download", "ancestors.json");
-      a.click();
-    });
-
-    document.getElementById("importBtn").addEventListener("click", () => {
-      document.getElementById("importFile").click();
-    });
-
-    document.getElementById("importFile").addEventListener("change", e => {
-      let file = e.target.files[0];
+    $('#importBtn').addEventListener('click', () => { $('#importFile').click(); });
+    $('#importFile').addEventListener('change', (e) => {
+      const file = e.target.files[0];
       if (!file) return;
-      let reader = new FileReader();
-      reader.onload = event => {
-        ancestors = JSON.parse(event.target.result);
-        saveData();
-        renderMarkers();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (!Array.isArray(data)) throw new Error('Invalid file format.');
+          // Ensure IDs exist
+          data.forEach(d => { if (!d.id) d.id = uid(); });
+          ancestors = data;
+          saveData();
+          map.closePopup();
+          renderMarkers();
+        } catch (err) {
+          alert('Failed to import: ' + err.message);
+        }
       };
       reader.readAsText(file);
     });
