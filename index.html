@@ -270,25 +270,46 @@
       return { lat: latlng.lat, lng: latlng.lng, items };
     }
 
-    function openGroupPopup(latlng, year) {
-      const group = getGroupAt(latlng, year);
-      if (!group.items.length) { map.closePopup(); return; }
+    function getAllAtLocation(latlng) {
+      const key = keyFrom(latlng.lat, latlng.lng);
+      const items = ancestors.filter(a => keyFrom(a.lat, a.lng) === key);
+      return { lat: latlng.lat, lng: latlng.lng, items };
+    }
 
-      const list = group.items.map(item => `
-        <li>
+    function openGroupPopup(latlng, year) {
+      const allAtLocation = getAllAtLocation(latlng);
+      if (!allAtLocation.items.length) { map.closePopup(); return; }
+
+      // Sort by start year for chronological display
+      const sortedItems = allAtLocation.items.sort((a, b) => a.startYear - b.startYear);
+
+      const list = sortedItems.map(item => {
+        const isCurrentlyActive = Number(item.startYear) <= year && year <= Number(item.endYear);
+        const activeClass = isCurrentlyActive ? ' style="background: #e8f4fd; padding: 4px; border-radius: 4px;"' : '';
+        
+        return `
+        <li${activeClass}>
           <div>
-            <div class="res-title">${escapeHtml(item.name)}</div>
+            <div class="res-title">${escapeHtml(item.name)}${isCurrentlyActive ? ' <span style="color: #2f7dd1; font-weight: normal; font-size: 11px;">● ACTIVE</span>' : ''}</div>
             <div class="res-years">${item.startYear} — ${item.endYear}</div>
           </div>
           <div class="btn-row">
             <button class="btn-small" onclick="editAncestor('${item.id}')">Edit</button>
             <button class="btn-small danger" onclick="deleteAncestor('${item.id}', ${latlng.lat}, ${latlng.lng})">Delete</button>
           </div>
-        </li>`).join('');
+        </li>`;
+      }).join('');
+
+      const activeCount = sortedItems.filter(item => 
+        Number(item.startYear) <= year && year <= Number(item.endYear)
+      ).length;
 
       const html = `
         <div class="popup-group">
-          <div><strong>${group.items.length}</strong> record${group.items.length>1?'s':''} here in <strong>${year}</strong></div>
+          <div><strong>${allAtLocation.items.length}</strong> total record${allAtLocation.items.length>1?'s':''} here</div>
+          <div style="color: var(--muted); font-size: 12px; margin-bottom: 8px;">
+            ${activeCount} active in <strong>${year}</strong>
+          </div>
           <ul class="res-list">${list}</ul>
           <button class="add-here" onclick="openFormPopup({lat: ${latlng.lat}, lng: ${latlng.lng}})">Add Another Person Here</button>
         </div>`;
