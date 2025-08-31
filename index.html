@@ -81,6 +81,7 @@
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
     let markers = [];
+    let arrows = [];
     let ancestors = JSON.parse(localStorage.getItem('ancestors') || '[]');
 
     // Migrate records to include stable IDs (for per-record edit/delete)
@@ -107,7 +108,91 @@
       return groups;
     }
 
-    function clearMarkers() { markers.forEach(m => map.removeLayer(m)); markers = []; }
+    function clearMarkers() { 
+      markers.forEach(m => map.removeLayer(m)); 
+      markers = []; 
+      arrows.forEach(a => map.removeLayer(a)); 
+      arrows = [];
+    }
+
+    function findMigrations(year) {
+      const migrations = [];
+      
+      // Group ancestors by person name to track their movements
+      const peopleByName = new Map();
+      ancestors.forEach(record => {
+        if (!peopleByName.has(record.name)) {
+          peopleByName.set(record.name, []);
+        }
+        peopleByName.get(record.name).push(record);
+      });
+      
+      // For each person, find migrations that happen in the current year
+      peopleByName.forEach((records, name) => {
+        // Sort records by start year to get chronological order
+        const sortedRecords = records.sort((a, b) => a.startYear - b.startYear);
+        
+        for (let i = 0; i < sortedRecords.length - 1; i++) {
+          const current = sortedRecords[i];
+          const next = sortedRecords[i + 1];
+          
+          // Check if migration happens in the selected year
+          // Migration occurs when current period ends and next period starts in the same year
+          if (current.endYear === year && next.startYear === year) {
+            migrations.push({
+              name: name,
+              from: { lat: current.lat, lng: current.lng },
+              to: { lat: next.lat, lng: next.lng }
+            });
+          }
+        }
+      });
+      
+      return migrations;
+    }
+
+    function renderArrows(year) {
+      const migrations = findMigrations(year);
+      
+      migrations.forEach(migration => {
+        // Create arrow line
+        const arrow = L.polyline([
+          [migration.from.lat, migration.from.lng],
+          [migration.to.lat, migration.to.lng]
+        ], {
+          color: '#e74c3c',
+          weight: 3,
+          opacity: 0.8,
+          dashArray: '10, 5'
+        }).addTo(map);
+        
+        // Add arrow head using a marker
+        const midLat = (migration.from.lat + migration.to.lat) / 2;
+        const midLng = (migration.from.lng + migration.to.lng) / 2;
+        
+        // Calculate angle for arrow direction
+        const angle = Math.atan2(
+          migration.to.lat - migration.from.lat,
+          migration.to.lng - migration.from.lng
+        ) * 180 / Math.PI;
+        
+        // Create custom arrow icon
+        const arrowIcon = L.divIcon({
+          html: `<div style="transform: rotate(${angle + 90}deg); color: #e74c3c; font-size: 16px;">▲</div>`,
+          className: 'arrow-icon',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8]
+        });
+        
+        const arrowMarker = L.marker([midLat, midLng], { 
+          icon: arrowIcon,
+          title: `${migration.name} migrated in ${year}`
+        }).addTo(map);
+        
+        arrows.push(arrow);
+        arrows.push(arrowMarker);
+      });
+    }
 
     function renderMarkers() {
       clearMarkers();
@@ -120,6 +205,9 @@
         marker.on('click', () => openGroupPopup({lat: group.lat, lng: group.lng}, year));
         markers.push(marker);
       });
+      
+      // Render migration arrows for the current year
+      renderArrows(year);
     }
 
     function getGroupAt(latlng, year) {
@@ -127,8 +215,6 @@
       const items = ancestors.filter(a => keyFrom(a.lat, a.lng) === key && Number(a.startYear) <= year && year <= Number(a.endYear));
       return { lat: latlng.lat, lng: latlng.lng, items };
     }
-
-    function openGroupPopup(latlng, year) {
       const group = getGroupAt(latlng, year);
       if (!group.items.length) { map.closePopup(); return; }
 
@@ -154,7 +240,7 @@
       L.popup().setLatLng(latlng).setContent(html).openOn(map);
     }
 
-    // Global functions for button clicks
+    function openGroupPopup(latlng, year) {
     window.editAncestor = function(id) {
       const rec = ancestors.find(x => x.id === id);
       if (rec) {
@@ -206,7 +292,7 @@
       L.popup().setLatLng(latlng).setContent(html).openOn(map);
     }
 
-    // Global function for saving
+    // Global functions for button clicks
     window.saveAncestor = function(lat, lng, existingId) {
       const nameInput = document.getElementById('ancestorName');
       const startInput = document.getElementById('startYear');
@@ -236,7 +322,7 @@
       openGroupPopup({lat, lng}, currentYear());
     };
 
-    // Click on empty map to add new entry at that spot
+    // Global function for saving
     map.on('click', (e) => { openFormPopup(e.latlng); });
 
     // Slider re-renders markers; also close any open popup to avoid stale content
